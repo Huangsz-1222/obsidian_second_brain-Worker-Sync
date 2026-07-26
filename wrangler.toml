@@ -1,21 +1,19 @@
 #:schema node_modules/wrangler/config-schema.json
-name = "obsidian-second-brain-sync"
+name = "obsidian-clipping-worker"
 main = "src/index.ts"
 compatibility_date = "2026-07-14"
-
-# D1（SQLite）作為 Vault 檔案儲存 —— 免費方案可用，不需綁定付款方式
-# 部署流程：npx wrangler d1 create obsidian-second-brain
-#           npx wrangler d1 execute obsidian-second-brain --remote --file=schema.sql
-[[d1_databases]]
-binding = "VAULT_DB"
-database_name = "obsidian-second-brain"
-database_id = "f9a8bcfa-9713-4736-8641-85356d6791da"
+compatibility_flags = ["nodejs_compat"]
 
 # 非機密的環境變數放這裡
 [vars]
-# Vault 在資料表內的路徑前綴（空白 = 根目錄；同一資料庫可放多個 vault）
-VAULT_PREFIX = ""
+GITHUB_REPO = "Huangsz-1222/20260621"
+GITHUB_BRANCH = "main"
+OBSIDIAN_SAVE_PATH = "Clippings_zh"
 
 # 機密憑證請用指令設定（不要寫在這裡）：
-#   npx wrangler secret put AUTH_USERNAME
-#   npx wrangler secret put AUTH_PASSWORD
+#   npx wrangler secret put TELEGRAM_BOT_TOKEN
+#   npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
+#   npx wrangler secret put GITHUB_TOKEN
+#   npx wrangler secret put JINA_API_KEY        # 選用，避免 Jina 限速
+#   npx wrangler secret put ADMIN_CHAT_ID       # 瀏覽器/PWA 分享後通知用
+#   npx wrangler secret put BROWSER_SECRET      # 瀏覽器擴充功能驗證

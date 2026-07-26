@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Obsidian Clipper",
+  "version": "1.0",
+  "description": "One-click save to Obsidian via Cloudflare Worker",
+  "permissions": [
+    "activeTab",
+    "notifications"
+  ],
+  "action": {
+    "default_title": "Clip to Obsidian"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}
