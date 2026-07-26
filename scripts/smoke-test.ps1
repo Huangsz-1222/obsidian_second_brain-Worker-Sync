@@ -170,8 +170,11 @@ Test-Step "清空後 PROPFIND 目錄應 404" {
 
 # 註：.NET Uri 與 Worker 的 WHATWG URL parser 都會先把 %2e%2e 正規化掉，
 # 因此穿越嘗試最終只會落在 bucket 內的無效路徑（404），不可能讀到上層。
-Test-Step "路徑穿越會被正規化（最終 404，無法越權讀取）" {
-  (Invoke-Dav -Method GET -Path "/%2e%2e/secret.txt").StatusCode -eq 404
+# 路徑穿越防護：server 端 resolveRequestPath 會 reject ".." 回 400；
+# 或 .NET Uri 先正規化掉 ".." 則回 404——兩者都代表穿越被阻擋，皆為安全結果。
+Test-Step "路徑穿越被阻擋（400 或 404，無法越權讀取）" {
+  $code = (Invoke-Dav -Method GET -Path "/%2e%2e/secret.txt").StatusCode
+  ($code -eq 400) -or ($code -eq 404)
 }
 
 if ($script:Failed -eq 0) {
