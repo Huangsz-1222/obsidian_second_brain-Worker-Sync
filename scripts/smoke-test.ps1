@@ -156,6 +156,10 @@ Test-Step "DELETE 刪除檔案（204）" {
   (Invoke-Dav -Method DELETE -Path "/smoke-test/copy.md").StatusCode -eq 204
 }
 
+Test-Step "超過 D1 單檔上限（約 1.9MB）應回 413" {
+  $bigBody = "x" * 2000000
+  (Invoke-Dav -Method PUT -Path "/smoke-test/big.bin" -Body $bigBody).StatusCode -eq 413
+}
 Test-Step "DELETE 整個目錄（204）" {
   (Invoke-Dav -Method DELETE -Path "/smoke-test/").StatusCode -eq 204
 }

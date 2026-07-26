@@ -3,15 +3,17 @@ name = "obsidian-second-brain-sync"
 main = "src/index.ts"
 compatibility_date = "2026-07-14"
 
-# R2 bucket 作為 Vault 檔案儲存
-# 部署前先建立：npx wrangler r2 bucket create obsidian-second-brain
-[[r2_buckets]]
-binding = "VAULT_BUCKET"
-bucket_name = "obsidian-second-brain"
+# D1（SQLite）作為 Vault 檔案儲存 —— 免費方案可用，不需綁定付款方式
+# 部署流程：npx wrangler d1 create obsidian-second-brain
+#           npx wrangler d1 execute obsidian-second-brain --remote --file=schema.sql
+[[d1_databases]]
+binding = "VAULT_DB"
+database_name = "obsidian-second-brain"
+database_id = "f9a8bcfa-9713-4736-8641-85356d6791da"
 
 # 非機密的環境變數放這裡
 [vars]
-# Vault 在 bucket 內的子路徑前綴（空白 = bucket 根目錄；同一 bucket 可放多個 vault）
+# Vault 在資料表內的路徑前綴（空白 = 根目錄；同一資料庫可放多個 vault）
 VAULT_PREFIX = ""
 
 # 機密憑證請用指令設定（不要寫在這裡）：

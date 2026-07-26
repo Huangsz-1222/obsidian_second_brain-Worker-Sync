@@ -1,5 +1,17 @@
 import type { Env } from "./index";
 import {
+  copyOne,
+  copyUnder,
+  deleteOne,
+  deleteUnder,
+  getFile,
+  headFile,
+  listUnder,
+  MAX_FILE_SIZE,
+  putFile,
+  type FileRow,
+} from "./store";
+import {
   encodePathHref,
   lockDiscovery,
   multistatus,
@@ -14,14 +26,16 @@ const XML_HEADERS: Record<string, string> = {
 const ALLOWED_METHODS =
   "OPTIONS, PROPFIND, GET, HEAD, PUT, DELETE, MKCOL, COPY, MOVE, LOCK, UNLOCK, PROPPATCH";
 
+const DIRECTORY_CONTENT_TYPE = "httpd/unix-directory";
+
 interface ResolvedPath {
   /** 解碼並正規化後的 URL 路徑（/ 開頭，無尾端斜線；根目錄為 /） */
   rawPath: string;
   /** URL 原本是否以 / 結尾（代表客戶端將其視為 collection） */
   isCollectionPath: boolean;
-  /** bucket 內的前綴（無前後斜線，可能為空字串） */
+  /** vault 路徑前綴（無前後斜線，可能為空字串） */
   prefix: string;
-  /** 對應的 R2 object key（無開頭斜線；根目錄 = prefix 本身） */
+  /** 對應 files 表的 path（無開頭斜線；根目錄 = prefix 本身） */
   key: string;
   /** 是否為根目錄 */
   isRoot: boolean;
@@ -101,14 +115,14 @@ function keyToPath(prefix: string, key: string): string {
   return "/" + stripped;
 }
 
-function fileEntry(path: string, object: R2Object): DavEntry {
+function fileEntry(path: string, row: FileRow): DavEntry {
   return {
     href: encodePathHref(path),
     displayName: path.split("/").pop() ?? path,
     isCollection: false,
-    size: object.size,
-    etag: object.httpEtag,
-    lastModified: object.uploaded,
+    size: row.size,
+    etag: `"${row.etag}"`,
+    lastModified: new Date(row.modified),
   };
 }
 
@@ -135,20 +149,16 @@ async function propfind(
     return new Response("403 Forbidden: Depth infinity is not supported", { status: 403 });
   }
 
-  const bucket = env.VAULT_BUCKET;
-  const head = resolved.isRoot ? null : await bucket.head(resolved.key);
+  const db = env.VAULT_DB;
+  const head = resolved.isRoot ? null : await headFile(db, resolved.key);
   const entries: DavEntry[] = [];
 
   if (head && !resolved.isCollectionPath) {
     entries.push(fileEntry(resolved.rawPath, head));
   } else {
-    let exists = resolved.isRoot;
     const listPrefix = collectionListPrefix(resolved);
-    if (!exists) {
-      const probe = await bucket.list({ prefix: listPrefix, limit: 1 });
-      exists = probe.objects.length > 0 || probe.delimitedPrefixes.length > 0;
-    }
-    if (!exists) {
+    const rows = await listUnder(db, listPrefix);
+    if (!resolved.isRoot && rows.length === 0) {
       return new Response("404 Not Found", { status: 404 });
     }
 
@@ -156,38 +166,34 @@ async function propfind(
     entries.push(collectionEntry(selfPath));
 
     if (depth === "1") {
-      let cursor: string | undefined;
-      do {
-        const page = await bucket.list({
-          prefix: listPrefix,
-          delimiter: "/",
-          cursor,
-          limit: 1000,
-        });
-        for (const object of page.objects) {
-          if (object.key === listPrefix) continue; // 目錄 marker 物件
-          entries.push(fileEntry(keyToPath(resolved.prefix, object.key), object));
+      // rows 包含所有後代；依第一層路徑段分組出直接子項
+      const subDirs = new Set<string>();
+      for (const row of rows) {
+        const rest = row.path.slice(listPrefix.length);
+        if (rest === "") continue; // 目前目錄的 marker 列
+        const slashIndex = rest.indexOf("/");
+        if (slashIndex === -1) {
+          entries.push(fileEntry(keyToPath(resolved.prefix, row.path), row));
+        } else {
+          subDirs.add(rest.slice(0, slashIndex));
         }
-        for (const dir of page.delimitedPrefixes) {
-          entries.push(collectionEntry(keyToPath(resolved.prefix, dir)));
-        }
-        cursor = page.truncated ? page.cursor : undefined;
-      } while (cursor);
+      }
+      for (const dir of subDirs) {
+        const dirKey = listPrefix + dir;
+        entries.push(collectionEntry(keyToPath(resolved.prefix, dirKey) + "/"));
+      }
     }
   }
 
   return new Response(multistatus(entries), { status: 207, headers: XML_HEADERS });
 }
 
-function objectHeaders(object: R2Object): Headers {
+function objectHeaders(row: FileRow): Headers {
   const headers = new Headers();
-  headers.set(
-    "Content-Type",
-    object.httpMetadata?.contentType ?? "application/octet-stream",
-  );
-  headers.set("Content-Length", String(object.size));
-  headers.set("ETag", object.httpEtag);
-  headers.set("Last-Modified", object.uploaded.toUTCString());
+  headers.set("Content-Type", row.content_type || "application/octet-stream");
+  headers.set("Content-Length", String(row.size));
+  headers.set("ETag", `"${row.etag}"`);
+  headers.set("Last-Modified", new Date(row.modified).toUTCString());
   return headers;
 }
 
@@ -200,13 +206,13 @@ async function getObject(
     return new Response("404 Not Found", { status: 404 });
   }
   if (headOnly) {
-    const head = await env.VAULT_BUCKET.head(resolved.key);
+    const head = await headFile(env.VAULT_DB, resolved.key);
     if (!head) return new Response("404 Not Found", { status: 404 });
     return new Response(null, { status: 200, headers: objectHeaders(head) });
   }
-  const object = await env.VAULT_BUCKET.get(resolved.key);
-  if (!object) return new Response("404 Not Found", { status: 404 });
-  return new Response(object.body, { status: 200, headers: objectHeaders(object) });
+  const file = await getFile(env.VAULT_DB, resolved.key);
+  if (!file) return new Response("404 Not Found", { status: 404 });
+  return new Response(file.content, { status: 200, headers: objectHeaders(file.meta) });
 }
 
 async function putObject(
@@ -217,11 +223,16 @@ async function putObject(
   if (resolved.isRoot || resolved.isCollectionPath) {
     return new Response("405 Method Not Allowed", { status: 405 });
   }
-  const existed = (await env.VAULT_BUCKET.head(resolved.key)) !== null;
+  const body = await request.arrayBuffer();
+  if (body.byteLength > MAX_FILE_SIZE) {
+    return new Response(
+      `413 Payload Too Large: D1 單檔上限約 ${Math.floor(MAX_FILE_SIZE / 1_000_000)} MB，請在 remotely-save 設定略過大檔`,
+      { status: 413 },
+    );
+  }
+  const existed = (await headFile(env.VAULT_DB, resolved.key)) !== null;
   const contentType = request.headers.get("Content-Type") ?? "application/octet-stream";
-  await env.VAULT_BUCKET.put(resolved.key, request.body ?? "", {
-    httpMetadata: { contentType },
-  });
+  await putFile(env.VAULT_DB, resolved.key, body, contentType);
   return new Response(null, { status: existed ? 204 : 201 });
 }
 
@@ -229,27 +240,13 @@ async function deleteResource(env: Env, resolved: ResolvedPath): Promise<Respons
   if (resolved.isRoot) {
     return new Response("403 Forbidden", { status: 403 });
   }
-  const bucket = env.VAULT_BUCKET;
-  const head = await bucket.head(resolved.key);
-  if (head) {
-    await bucket.delete(resolved.key);
+  const db = env.VAULT_DB;
+  if (await deleteOne(db, resolved.key)) {
     return new Response(null, { status: 204 });
   }
-
-  // 視為 collection：刪除前綴下所有物件（含目錄 marker）
-  const listPrefix = resolved.key + "/";
-  let found = false;
-  let cursor: string | undefined;
-  do {
-    const page = await bucket.list({ prefix: listPrefix, cursor, limit: 1000 });
-    const keys = page.objects.map((object) => object.key);
-    if (keys.length > 0) {
-      found = true;
-      await bucket.delete(keys);
-    }
-    cursor = page.truncated ? page.cursor : undefined;
-  } while (cursor);
-  return new Response(null, { status: found ? 204 : 404 });
+  // 視為 collection：刪除前綴下所有列（含目錄 marker）
+  const removed = await deleteUnder(db, resolved.key + "/");
+  return new Response(null, { status: removed > 0 ? 204 : 404 });
 }
 
 async function mkcol(request: Request, env: Env, resolved: ResolvedPath): Promise<Response> {
@@ -260,8 +257,8 @@ async function mkcol(request: Request, env: Env, resolved: ResolvedPath): Promis
   if (length > 0) {
     return new Response("415 Unsupported Media Type", { status: 415 });
   }
-  // R2 是扁平儲存：用零位元組的 marker 物件代表空目錄
-  await env.VAULT_BUCKET.put(resolved.key + "/", "");
+  // D1 是扁平 key 儲存：用以 / 結尾的空列代表目錄
+  await putFile(env.VAULT_DB, resolved.key + "/", new ArrayBuffer(0), DIRECTORY_CONTENT_TYPE);
   return new Response(null, { status: 201 });
 }
 
@@ -291,44 +288,29 @@ async function copyOrMove(
   }
 
   const overwrite = (request.headers.get("Overwrite") ?? "T").toUpperCase() !== "F";
-  const bucket = env.VAULT_BUCKET;
+  const db = env.VAULT_DB;
 
-  // 收集來源：單一檔案，或 collection 前綴下的所有物件
-  const sourceKeys: string[] = [];
-  const sourceHead = await bucket.head(resolved.key);
-  if (sourceHead) {
-    sourceKeys.push(resolved.key);
-  } else {
-    const listPrefix = resolved.key + "/";
-    let cursor: string | undefined;
-    do {
-      const page = await bucket.list({ prefix: listPrefix, cursor, limit: 1000 });
-      sourceKeys.push(...page.objects.map((object) => object.key));
-      cursor = page.truncated ? page.cursor : undefined;
-    } while (cursor);
-  }
-  if (sourceKeys.length === 0) {
-    return new Response("404 Not Found", { status: 404 });
+  const sourceIsFile = (await headFile(db, resolved.key)) !== null;
+  if (!sourceIsFile) {
+    const sourceRows = await listUnder(db, resolved.key + "/");
+    if (sourceRows.length === 0) {
+      return new Response("404 Not Found", { status: 404 });
+    }
   }
 
-  const destExisted = (await bucket.head(destResolved.key)) !== null;
+  const destHead = await headFile(db, destResolved.key);
+  const destExisted =
+    destHead !== null || (await listUnder(db, destResolved.key + "/")).length > 0;
   if (!overwrite && destExisted) {
     return new Response("412 Precondition Failed", { status: 412 });
   }
 
-  for (const sourceKey of sourceKeys) {
-    const suffix = sourceKey.slice(resolved.key.length);
-    const object = await bucket.get(sourceKey);
-    if (!object) continue;
-    await bucket.put(destResolved.key + suffix, object.body, {
-      httpMetadata: object.httpMetadata,
-    });
-  }
-
-  if (isMove) {
-    for (let i = 0; i < sourceKeys.length; i += 1000) {
-      await bucket.delete(sourceKeys.slice(i, i + 1000));
-    }
+  if (sourceIsFile) {
+    await copyOne(db, resolved.key, destResolved.key);
+    if (isMove) await deleteOne(db, resolved.key);
+  } else {
+    await copyUnder(db, resolved.key + "/", destResolved.key + "/");
+    if (isMove) await deleteUnder(db, resolved.key + "/");
   }
 
   return new Response(null, { status: destExisted ? 204 : 201 });

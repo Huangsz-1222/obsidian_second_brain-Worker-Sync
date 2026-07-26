@@ -1,13 +1,13 @@
 import { handleWebDav } from "./webdav";
 
 export interface Env {
-  /** R2 bucket binding（wrangler.toml） */
-  VAULT_BUCKET: R2Bucket;
+  /** D1 資料庫 binding（wrangler.toml） */
+  VAULT_DB: D1Database;
   /** Basic Auth 帳號（wrangler secret put AUTH_USERNAME） */
   AUTH_USERNAME: string;
   /** Basic Auth 密碼（wrangler secret put AUTH_PASSWORD） */
   AUTH_PASSWORD: string;
-  /** 選用：Vault 在 bucket 內的子路徑前綴 */
+  /** 選用：Vault 在資料表內的路徑前綴 */
   VAULT_PREFIX?: string;
 }
 
