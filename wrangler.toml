@@ -6,7 +6,7 @@ compatibility_flags = ["nodejs_compat"]
 
 # 非機密的環境變數放這裡
 [vars]
-GITHUB_REPO = "Huangsz-1222/20260621"
+GITHUB_REPO = "Huangsz-1222/Second-Brain"
 GITHUB_BRANCH = "main"
 OBSIDIAN_SAVE_PATH = "Clippings_zh"
 
@@ -17,3 +17,4 @@ OBSIDIAN_SAVE_PATH = "Clippings_zh"
 #   npx wrangler secret put JINA_API_KEY        # 選用，避免 Jina 限速
 #   npx wrangler secret put ADMIN_CHAT_ID       # 瀏覽器/PWA 分享後通知用
 #   npx wrangler secret put BROWSER_SECRET      # 瀏覽器擴充功能驗證
+
