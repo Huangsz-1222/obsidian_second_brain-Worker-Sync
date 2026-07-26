@@ -1,6 +1,8 @@
 # obsidian_second_brain-Worker-Sync
 
-用 **Cloudflare Workers + R2** 自架的 Obsidian Vault 同步後端。
+用 **Cloudflare Workers + D1（SQLite）** 自架的 Obsidian Vault 同步後端（免費、免綁定付款方式）
+
+> **為何用 D1 而不是 R2？** R2 雖然 10 GB 免費，但啟用前 Cloudflare 會要求綁定付款方式（信用卡或 PayPal）。D1 免費方案可直接使用、不需綁卡，對純文字 vault 綽綽有餘
 對外提供 **WebDAV API**，搭配 Obsidian 社群外掛 [remotely-save](https://github.com/remotely-save/remotely-save)，
 讓桌機、筆電、iOS / Android 手機都能同步同一個 Second Brain 知識庫——
 **不需訂閱 Obsidian Sync，檔案存放在自己的 Cloudflare 帳號裡。**
@@ -24,7 +26,9 @@ flowchart LR
 
 - **免費額度內幾乎零成本**：Workers 每天 10 萬次請求、R2 10 GB 儲存，個人知識庫綽綽有餘
 - **跨平台**：remotely-save 支援 Windows / macOS / Linux / iOS / Android
+- **儲存層**：D1（SQLite），免費、免綁付款方式
 - **完整 WebDAV 子集**：PROPFIND / GET / HEAD / PUT / DELETE / MKCOL / MOVE / COPY / LOCK
+- **單檔上限 ~1.9 MB**：D1 單列約 2 MB；純文字筆記通常遠低於此，大附件請在 remotely-save 設定略過
 - **安全**：Basic Auth（SHA-256 常數時間比對）、全 HTTPS、R2 私有 bucket 不對外公開
 - **中文檔名友善**：完整處理 URL encode / XML 跳脫
 - **多 Vault 支援**：用 `VAULT_PREFIX` 在同一個 bucket 內隔離多個知識庫
@@ -45,13 +49,19 @@ npx wrangler login
 
 會開啟瀏覽器完成 OAuth 授權。
 
-### 2. 建立 R2 Bucket
+### 2. 建立 D1 資料庫
 
 ```powershell
-npx wrangler r2 bucket create obsidian-second-brain
+npx wrangler d1 create obsidian-second-brain
 ```
 
-> bucket 名稱若改成別的，記得同步修改 `wrangler.toml` 裡的 `bucket_name`。
+將輸出的 `database_id` 填入 `wrangler.toml` 的 `[[d1_databases]]` 區塊（已為你預先填好），再寫入 schema：
+
+```powershell
+npx wrangler d1 execute obsidian-second-brain --remote --file=schema.sql
+```
+
+> D1 免費方案不需綁定任何付款方式，直接可用。
 
 ### 3. 設定同步用帳號密碼（Secrets）
 
@@ -117,26 +127,30 @@ npm run typecheck                  # TypeScript 型別檢查
 ```
 ├── src/
 │   ├── index.ts      # Worker 入口：Basic Auth 驗證、CORS、錯誤處理
+│   ├── store.ts      # D1 儲存層封裝（head/get/put/list/delete/copy、1.9MB 上限）
 │   ├── webdav.ts     # WebDAV 方法處理（PROPFIND/GET/PUT/DELETE/MKCOL/MOVE/COPY/LOCK）
 │   └── xml.ts        # 207 Multi-Status XML 產生、跳脫與 href 編碼
 ├── scripts/
 │   └── smoke-test.ps1# 端對端煙霧測試（相容 Windows PowerShell 5.1+）
-├── wrangler.toml     # Worker 設定與 R2 binding
+├── schema.sql        # D1 files 表 schema（path PK + BLOB content + etag + modified）
+├── wrangler.toml     # Worker 設定與 D1 binding
 └── .dev.vars.example # 本地開發憑證範本
 ```
 
 ### 實作說明
 
-- R2 是扁平物件儲存，「目錄」以零位元組 marker 物件（key 以 `/` 結尾）+ 前綴列舉實現
-- 檔案 key = vault 相對路徑；PROPFIND 以 `list(prefix, delimiter="/")` 重建目錄樹
-- MOVE/COPY 對目錄為遞迴操作；DELETE 目錄會批次清除前綴下所有物件
+- D1 以單一資料表 `files` 儲存所有檔案；「目錄」用 `path` 以 `/` 結尾、`content` 為空的列實現
+- PROPFIND 以 SQL 範圍查詢（`path >= prefix AND path < prefix + UPPER`）重建目錄樹，但 `depth:infinity` 直接回 403（避免大型 vault 一次回傳太多）
+- MOVE/COPY 對目錄為遞迴操作（純 SQL 字串拼接前綴）；DELETE 目錄會批次清除前綴下所有列
+- ETag 以檔案內容 SHA-256 計算、寫入時一併存進資料表；HEAD 與 PROPFIND 直接讀
+- `getFile` 會正規化 D1 BLOB 的回傳型別（正式環境為 `ArrayBuffer`、本地 miniflare 為 `number[]`），確保本機與線上行為一致
 - LOCK/UNLOCK 為無狀態假鎖，僅供需要鎖定的客戶端相容使用（remotely-save 不使用）
 
 ## 限制與注意事項
 
 | 項目 | 說明 |
 |:--|:--|
-| 單檔大小 | Workers 請求體上限約 100 MB（免費方案），大附件建議略過或改用 Git |
+| 單檔大小 | D1 單列上限 ~2 MB（程式設 1.9 MB 安全邊界），大附件請在 remotely-save 設定略過 |
 | 版本歷史 | 本方案不保留歷史版本；建議 vault 同時搭配 Git 備份（如現有的 github-sync） |
 | 衝突處理 | 單機編輯後立即同步可避免多機衝突；remotely-save 以 mtime 判斷 |
 | workers.dev 網域 | 預設網域即可使用，也可在 Cloudflare 後台綁定自己的網域 |
@@ -146,10 +160,12 @@ npm run typecheck                  # TypeScript 型別檢查
 | 資源 | 免費額度 | 個人知識庫典型用量 |
 |:--|:--|:--|
 | Workers 請求 | 100,000 次 / 天 | 每日數百～數千次 |
-| R2 儲存 | 10 GB | 純文字筆記通常 < 1 GB |
-| R2 Class A（寫入） | 100 萬次 / 月 | 遠低於額度 |
-| R2 Class B（讀取） | 1,000 萬次 / 月 | 遠低於額度 |
-| R2 出口流量 | 免費 | — |
+| D1 儲存 | 5 GB（帳號總量）/ 500 MB（單資料庫） | 純文字筆記通常 < 1 GB |
+| D1 讀取 | 5,000,000 列 / 天 | 遠低於額度 |
+| D1 寫入 | 100,000 列 / 天 | 遠低於額度 |
+| 出口流量 | 免費 | — |
+
+> D1 免費方案不需綁定付款方式；R2 則需要（這也是本專案改用 D1 的原因）
 
 ## License
 
