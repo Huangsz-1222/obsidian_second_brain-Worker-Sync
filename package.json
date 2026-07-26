@@ -1,0 +1,19 @@
+{
+  "name": "obsidian-second-brain-worker-sync",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Obsidian vault sync backend: WebDAV API on Cloudflare Workers backed by R2, designed for the remotely-save plugin.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "smoke": "powershell -ExecutionPolicy Bypass -File scripts/smoke-test.ps1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260724.1",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.114.0"
+  }
+}
+

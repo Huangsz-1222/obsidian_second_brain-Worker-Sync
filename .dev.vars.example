@@ -1,0 +1,5 @@
+# 本地開發用的測試憑證（複製為 .dev.vars 後填上自己的值）
+AUTH_USERNAME=testuser
+AUTH_PASSWORD=testpass
+# 選用：Vault 在 R2 bucket 內的子路徑前綴（例如 vault1）
+# VAULT_PREFIX=

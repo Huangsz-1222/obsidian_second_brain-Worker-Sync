@@ -1,0 +1,19 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "obsidian-second-brain-sync"
+main = "src/index.ts"
+compatibility_date = "2026-07-14"
+
+# R2 bucket 作為 Vault 檔案儲存
+# 部署前先建立：npx wrangler r2 bucket create obsidian-second-brain
+[[r2_buckets]]
+binding = "VAULT_BUCKET"
+bucket_name = "obsidian-second-brain"
+
+# 非機密的環境變數放這裡
+[vars]
+# Vault 在 bucket 內的子路徑前綴（空白 = bucket 根目錄；同一 bucket 可放多個 vault）
+VAULT_PREFIX = ""
+
+# 機密憑證請用指令設定（不要寫在這裡）：
+#   npx wrangler secret put AUTH_USERNAME
+#   npx wrangler secret put AUTH_PASSWORD
