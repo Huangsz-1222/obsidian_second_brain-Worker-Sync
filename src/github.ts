@@ -10,6 +10,7 @@ export async function saveToGitHub(env: Env, filename: string, content: string):
   // Check if file exists to get the SHA (required for updating, though we might only be creating)
   let sha: string | undefined = undefined;
   
+  console.log('[clip] github GET', url);
   const getRes = await fetch(url, {
     headers: {
       'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
@@ -41,9 +42,11 @@ export async function saveToGitHub(env: Env, filename: string, content: string):
 
   if (!putRes.ok) {
     const errorText = await putRes.text();
+    console.error('[clip] github PUT failed', putRes.status, errorText);
     throw new Error(`GitHub API error: ${putRes.status} ${errorText}`);
   }
 
   return path;
 }
+
 

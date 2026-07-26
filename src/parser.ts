@@ -27,6 +27,7 @@ tags:
 }
 
 export async function processArticle(env: Env, url: string, chatId: number): Promise<void> {
+  console.log('[clip] processArticle start, url=', url, 'chatId=', chatId);
   try {
     // 1. Fetch from Jina Reader API
     const jinaUrl = `https://r.jina.ai/${url}`;
@@ -67,6 +68,7 @@ export async function processArticle(env: Env, url: string, chatId: number): Pro
     }
 
     const resJson: any = await response.json();
+    console.log('[clip] Jina ok, status=', response.status, 'hasTitle=', !!resJson?.data?.title, 'contentLen=', (resJson?.data?.content || '').length);
     // Jina returns { code, status, data: { title, url, content, author, ... } }
     const data = resJson.data || resJson; // Fallback in case of different format
     
@@ -86,13 +88,16 @@ export async function processArticle(env: Env, url: string, chatId: number): Pro
     const finalContent = frontmatter + content;
 
     // 3. Save to GitHub
+    console.log('[clip] saving to github, filename=', filename, 'bodyLen=', finalContent.length);
     const savedPath = await saveToGitHub(env, filename, finalContent);
+    console.log('[clip] github saved at', savedPath);
 
     // 4. Send success message
     await sendMessage(env, chatId, `已成功存入 Obsidian：\`${savedPath}\``);
   } catch (error: any) {
-    console.error('Process error:', error);
+    console.error('[clip] Process error:', error?.message || error, error?.stack);
     await sendMessage(env, chatId, `採集失敗：${error.message || error}`);
   }
 }
+
 
